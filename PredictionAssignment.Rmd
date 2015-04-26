@@ -1,0 +1,233 @@
+---
+title: "PredictionAssignment"
+date: "April 26, 2015"
+output: html_document
+---
+
+This assignment utilizes the Human Activity Recognition (HAR) dataset (Ugulino et al., 2012) that includes the data from wearbable accelerometers. The training dataset includes 19,622 observations of 160 variables. The challenge is to predict the manner in which the exercise was conducted using the classe variable.  A prediction model needs to be built, which will then be used to predict 20 different test cases from the test set.
+
+The steps are outlined below:
+
+```{r include=FALSE, cache=FALSE}
+library(quantmod) 
+options("getSymbols.warning4.0"=FALSE)
+invisible(getSymbols("^RUT"))
+library(AppliedPredictiveModeling)
+library(caret)
+library(rpart)
+library(randomForest)
+library(rattle)
+library(rpart.plot)
+
+invisible(dev.off())
+```
+##1. Import training and test data
+```{r}
+training <- read.csv("pml-training.csv",
+                        na.strings=c("NA",""), header=TRUE)
+training_columns <- colnames(training)
+testing <- read.csv("pml-testing.csv",
+                       na.strings=c("NA",""), header=TRUE)
+testing_columns <- colnames(testing)
+```
+
+##2. Remove unnecessary columns to avoid overfitting
+
+This step is extremely important in order to avoid overfitting of training data. The columns containing NA will be dropped from the training set. Additionally, columns that may not be relevant to the training will be dropped as well.
+```{r}
+numNonNAs <- function(x) {
+  as.vector(apply(x, 2, function(x)
+    length(which(!is.na(x)))))
+}
+
+columnCount <- numNonNAs(training)
+droppedColumns <- c()
+for (i in 1:length(columnCount)) {
+  if (columnCount[i] < nrow(training)) {
+    droppedColumns <- c(droppedColumns, training_columns[i])
+  } 
+}
+training <- training[,!(names(training) %in% droppedColumns)]
+training <- training[,8:length(colnames(training))]
+testing <- testing[,!(names(testing) %in% droppedColumns)]
+testing <- testing[,8:length(colnames(testing))]
+colnames(training)
+colnames(testing)
+```
+##3. Check for zero variance predictors -- if present, they can be removed
+By leveraging the nearZeroVar function, any predictors with zero variance will be removed from the training set.
+```{r}
+nsv <- nearZeroVar(training, saveMetrics=TRUE)
+nsv
+```
+As shown in the result, there are no predictors that have the zero variance set to true. So nothing to remove at this stage.
+##4. Cross validation
+This is an important step to improve the accuracy of training. In this assignment, the data will be divided into four partitions.
+4.1. Divide the data into four partitions.
+```{r}
+set.seed(998)
+rowPositions <- createDataPartition(y=training$classe,
+                                 p=0.25, list=FALSE)
+partition1 <- training[rowPositions,]
+remainder <- training[-rowPositions,]
+set.seed(998)
+rowPositions <- createDataPartition(y=remainder$classe,
+                                 p=0.33, list=FALSE)
+partition2 <- remainder[rowPositions,]
+remainder <- remainder[-rowPositions,]
+set.seed(998)
+rowPositions <- createDataPartition(y=remainder$classe,
+                                 p=0.5, list=FALSE)
+partition3 <- remainder[rowPositions,]
+partition4 <- remainder[-rowPositions,]
+```
+4.2. Divide the partitions into training (60%) and test (40%) sets.
+```{r}
+set.seed(998)
+inTrain <- createDataPartition(y=partition1$classe, p=0.6,
+                               list=FALSE)
+trainingSet1 <- partition1[inTrain,]
+testingSet1 <- partition1[-inTrain,]
+set.seed(998)
+inTrain <- createDataPartition(y=partition2$classe, p=0.6,
+                               list=FALSE)
+trainingSet2 <- partition2[inTrain,]
+testingSet2 <- partition2[-inTrain,]
+set.seed(998)
+inTrain <- createDataPartition(y=partition3$classe, p=0.6,
+                               list=FALSE)
+trainingSet3 <- partition3[inTrain,]
+testingSet3 <- partition3[-inTrain,]
+set.seed(998)
+inTrain <- createDataPartition(y=partition4$classe, p=0.6,
+                               list=FALSE)
+trainingSet4 <- partition4[inTrain,]
+testingSet4 <- partition4[-inTrain,]
+```
+##5. Recursive partitioning
+Train on training set 1 of 4 with both preprocessing and cross validation.
+```{r}
+set.seed(998)
+modFit <- train(trainingSet1$classe ~ .,
+                preProcess=c("center", "scale"),
+                trControl=trainControl(method = "cv", number = 4), data =
+                  trainingSet1, method="rpart")
+print(modFit, digits=3)
+```
+Run against testing set 1 of 4 with both preprocessing and cross validation.
+```{r}
+predictions <- predict(modFit, newdata=testingSet1)
+print(confusionMatrix(predictions, testingSet1$classe),
+      digits=4)
+```
+The accuracy is 0.4957, which is too low. 
+
+The next method to try out is Random Forest.
+
+##6. Random Forest
+6.1.1 Train on training set 1 of 4 with both preprocessing and cross validation.
+```{r}
+set.seed(998)
+modFit <- train(trainingSet1$classe ~ ., method="rf",
+                preProcess=c("center", "scale"),
+                trControl=trainControl(method = "cv", number = 4),
+                data=trainingSet1)
+print(modFit, digits=3)
+```
+6.1.2. Run against testing set 1 of 4.
+```{r}
+predictions <- predict(modFit, newdata=testingSet1)
+print(confusionMatrix(predictions, testingSet1$classe),
+      digits=4)
+```
+The accuracy is much better at 0.951. We will continue with RandomForest.
+6.1.3. Run against HAR test set.
+```{r}
+print(predict(modFit, newdata=testing))
+```
+6.2.1. Train on training set 2 of 4 with both preprocessing and cross validation.
+```{r}
+set.seed(998)
+modFit <- train(trainingSet2$classe ~ ., method="rf",
+                preProcess=c("center", "scale"),
+                trControl=trainControl(method = "cv", number = 4),
+                data=trainingSet2)
+print(modFit, digits=3)
+```
+6.2.2. Run against testing set 2 of 4.
+```{r}
+predictions <- predict(modFit, newdata=testingSet2)
+print(confusionMatrix(predictions, testingSet2$classe),
+      digits=4)
+```
+6.2.3. Run against HAR test set
+```{r}
+print(predict(modFit, newdata=testing))
+```
+6.3.1. Train on training set 3 of 4 with both preprocessing and cross validation.
+```{r}
+set.seed(998)
+modFit <- train(trainingSet3$classe ~ ., method="rf",
+                preProcess=c("center", "scale"),
+                trControl=trainControl(method = "cv", number = 4),
+                data=trainingSet3)
+print(modFit, digits=3)
+```
+6.3.2. Run against testing set 3 of 4.
+```{r}
+predictions <- predict(modFit, newdata=testingSet3)
+print(confusionMatrix(predictions, testingSet3$classe),
+      digits=4)
+```
+6.3.3. Run against HAR test set
+```{r}
+print(predict(modFit, newdata=testing))
+```
+6.4.1. Train on training set 4 of 4 with both preprocessing and cross validation.
+```{r}
+set.seed(998)
+modFit <- train(trainingSet4$classe ~ ., method="rf",
+                preProcess=c("center", "scale"),
+                trControl=trainControl(method = "cv", number = 4),
+                data=trainingSet4)
+print(modFit, digits=3)
+```
+6.4.2. Run against testing set 4 of 4.
+```{r}
+predictions <- predict(modFit, newdata=testingSet4)
+print(confusionMatrix(predictions, testingSet4$classe),
+      digits=4)
+```
+6.4.3. Run against HAR test set
+```{r}
+print(predict(modFit, newdata=testing))
+```
+
+## 7. Summarizing the Results
+Following is the summary of results based on RandomForest on each of the sets:
+TestSet 1:
+Accuracy:  0.951
+ErrorRate: 0.049
+Results:   BABAAEDDAABCBAEEABBB
+
+TestSet 2:
+Accuracy:  0.9547
+ErrorRate: 0.0463
+Results:   BABAAEDDAABCBAEEADBB
+
+TestSet3:
+Accuracy:  0.9645
+ErrorRate: 0.0355
+Results:   BABAAEDBAABCBAEEABBB
+
+TestSet4:
+Accuracy:  0.9492
+ErrorRate: 0.0508
+Results:   CAAAAEDBAABCBAEEABBB
+
+
+TestSet3 result is the one with the lowest error rate (or highest accuracy). It indeed resulted in 100% match in the prediction assignment.
+
+#References
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
